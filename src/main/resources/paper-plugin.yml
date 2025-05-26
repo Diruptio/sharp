@@ -1,0 +1,7 @@
+name: sharp
+main: diruptio.sharp.SharpPlugin
+version: '${version}'
+api-version: '1.21'
+authors:
+  - Fabi.exe
+load: STARTUP
