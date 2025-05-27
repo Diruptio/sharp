@@ -1,5 +1,7 @@
 package diruptio.sharp.util;
 
+import java.io.IOException;
+import java.io.ObjectInputStream;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -258,5 +260,16 @@ public class BitBuffer {
 
     public void setSize(int size) {
         this.size = size;
+    }
+
+    public static @NotNull BitBuffer fromObjectInputStream(@NotNull ObjectInputStream inputStream, int length) {
+        try {
+            BitBuffer buffer = new BitBuffer(length);
+            inputStream.readFully(buffer.getBytes());
+            buffer.size = length;
+            return buffer;
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to read from ObjectInputStream", e);
+        }
     }
 }

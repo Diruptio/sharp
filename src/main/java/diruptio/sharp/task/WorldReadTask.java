@@ -1,5 +1,6 @@
 package diruptio.sharp.task;
 
+import diruptio.sharp.util.BitBuffer;
 import diruptio.sharp.util.EmptyWorldGenerator;
 import diruptio.sharp.SharpPlugin;
 import diruptio.sharp.data.BlockHeap;
@@ -32,9 +33,8 @@ public record WorldReadTask(@NotNull String name,
         }
 
         BlockPalette blockPalette = readBlockPalette();
-        readChunks(/*executor, */Objects.requireNonNull(world), blockPalette);
+        readChunks(Objects.requireNonNull(world), blockPalette);
 
-        //executor.close();
         future().complete(world);
     }
 
@@ -56,11 +56,15 @@ public record WorldReadTask(@NotNull String name,
             List<Future<?>> chunkFutures = new ArrayList<>();
             int chunkCount = in.readInt();
             for (int i = 0; i < chunkCount; i++) {
-                Chunk chunk = world.getChunkAt(in.readInt(), in.readInt());
-                BlockHeap[] heaps = new BlockHeap[in.readInt()];
+                BitBuffer buffer = new BitBuffer(in.readInt());
+                in.readFully(buffer.getBytes());
+                buffer.setSize(buffer.getCapacity());
+
+                Chunk chunk = world.getChunkAt(buffer.readInt(), buffer.readInt());
+                BlockHeap[] heaps = new BlockHeap[buffer.readInt()];
                 for (int j = 0; j < heaps.length; j++) {
-                    int count = in.readInt();
-                    int blockId = in.readInt();
+                    int count = buffer.readInt();
+                    int blockId = buffer.readInt();
                     heaps[j] = new BlockHeap(count, blockId);
                 }
                 CompletableFuture<Void> future = new CompletableFuture<>();

@@ -1,20 +1,17 @@
 package diruptio.sharp.task;
 
-import com.google.common.io.ByteArrayDataOutput;
-import com.google.common.io.ByteStreams;
 import diruptio.sharp.data.BlockPalette;
 import diruptio.sharp.data.BlockType;
-import java.nio.ByteBuffer;
+import diruptio.sharp.util.BitBuffer;
 import java.util.concurrent.Callable;
 import org.bukkit.Chunk;
 import org.bukkit.Material;
 import org.jetbrains.annotations.NotNull;
 
-public record ChunkWriteTask(@NotNull Chunk chunk, @NotNull BlockPalette blockPalette) implements Callable<ByteBuffer> {
+public record ChunkWriteTask(@NotNull Chunk chunk, @NotNull BlockPalette blockPalette) implements Callable<BitBuffer> {
     @Override
-    public ByteBuffer call() {
-        ByteArrayDataOutput out = ByteStreams.newDataOutput();
-
+    public BitBuffer call() {
+        BitBuffer blockBuffer = new BitBuffer(blockPalette.getSize() * 4);
         int blockId = 0;
         int currentBlockCount = 0;
         int heaps = 0;
@@ -27,8 +24,8 @@ public record ChunkWriteTask(@NotNull Chunk chunk, @NotNull BlockPalette blockPa
                         currentBlockCount++;
                     } else {
                         if (currentBlockCount > 0) {
-                            out.writeInt(currentBlockCount);
-                            out.writeInt(blockId);
+                            blockBuffer.writeInt(currentBlockCount);
+                            blockBuffer.writeInt(blockId);
                             heaps++;
                         }
                         blockId = currentBlockId;
@@ -38,17 +35,17 @@ public record ChunkWriteTask(@NotNull Chunk chunk, @NotNull BlockPalette blockPa
             }
         }
         if (currentBlockCount > 0) {
-            out.writeInt(currentBlockCount);
-            out.writeInt(blockId);
+            blockBuffer.writeInt(currentBlockCount);
+            blockBuffer.writeInt(blockId);
             heaps++;
         }
+        blockBuffer.flip();
 
-        byte[] data = out.toByteArray();
-        ByteBuffer buffer = ByteBuffer.allocate(3 * Integer.BYTES + data.length);
-        buffer.putInt(chunk.getX());
-        buffer.putInt(chunk.getZ());
-        buffer.putInt(heaps);
-        buffer.put(data);
+        BitBuffer buffer = new BitBuffer(blockBuffer.getSize());
+        buffer.writeInt(chunk.getX());
+        buffer.writeInt(chunk.getZ());
+        buffer.writeInt(heaps);
+        buffer.writeBits(blockBuffer);
 
         return buffer;
     }

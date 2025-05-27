@@ -2,9 +2,9 @@ package diruptio.sharp.task;
 
 import diruptio.sharp.data.BlockPalette;
 import diruptio.sharp.data.BlockType;
+import diruptio.sharp.util.BitBuffer;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
-import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.*;
 import org.bukkit.Chunk;
@@ -78,16 +78,17 @@ public record WorldWriteTask(@NotNull World world,
     }
 
     private void writeChunks(@NotNull ExecutorService executor, @NotNull List<Chunk> chunks, @NotNull BlockPalette blockPalette) {
-        List<Future<ByteBuffer>> chunkFutures = new ArrayList<>();
+        List<Future<BitBuffer>> chunkFutures = new ArrayList<>();
         for (Chunk chunk : chunks) {
             chunkFutures.add(executor.submit(new ChunkWriteTask(chunk, blockPalette)));
         }
 
         try {
             out.writeInt(chunks.size());
-            for (Future<ByteBuffer> future : chunkFutures) {
-                ByteBuffer buffer = future.get();
-                out.write(buffer.array(), 0, buffer.limit());
+            for (Future<BitBuffer> future : chunkFutures) {
+                BitBuffer buffer = future.get();
+                out.writeInt(buffer.getSize());
+                out.write(buffer.getBytes());
             }
         } catch (IOException | InterruptedException | ExecutionException e) {
             throw new RuntimeException("Failed to write chunks of world: " + world.getName(), e);
