@@ -3,7 +3,6 @@ package diruptio.sharp.task;
 import diruptio.sharp.util.BitBuffer;
 import diruptio.sharp.util.EmptyWorldGenerator;
 import diruptio.sharp.SharpPlugin;
-import diruptio.sharp.data.BlockHeap;
 import diruptio.sharp.data.BlockPalette;
 import diruptio.sharp.data.BlockType;
 import java.io.IOException;
@@ -13,10 +12,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.*;
 import net.kyori.adventure.key.Key;
-import org.bukkit.Bukkit;
-import org.bukkit.Chunk;
-import org.bukkit.World;
-import org.bukkit.WorldCreator;
+import org.bukkit.*;
 import org.jetbrains.annotations.NotNull;
 
 import static diruptio.sharp.SharpPlugin.debug;
@@ -72,16 +68,9 @@ public record WorldReadTask(@NotNull String name,
                 in.readFully(buffer.getBytes());
                 buffer.setSize(buffer.getCapacity());
 
-                Chunk chunk = world.getChunkAt(buffer.readInt(), buffer.readInt());
-                BlockHeap[] heaps = new BlockHeap[buffer.readInt()];
-                for (int j = 0; j < heaps.length; j++) {
-                    int count = buffer.readInt();
-                    int blockId = buffer.readInt();
-                    heaps[j] = new BlockHeap(count, blockId);
-                }
                 CompletableFuture<Void> future = new CompletableFuture<>();
                 chunkFutures.add(future);
-                Thread.startVirtualThread(new ChunkBlocksReadTask(chunk, blockPalette, heaps, future));
+                Thread.startVirtualThread(new ChunkBlocksReadTask(world, blockPalette, buffer, future));
             }
             debug("Read chunk data for world " + name + " in " + (System.currentTimeMillis() - start) + "ms");
             for (Future<?> future : chunkFutures) {
