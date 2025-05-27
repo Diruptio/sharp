@@ -24,8 +24,18 @@ public record WorldReadTask(@NotNull String name,
     public void run() {
         debug("Starting to read world: " + name);
 
-        long start = System.currentTimeMillis();
         WorldCreator creator = new WorldCreator(name).generator(new EmptyWorldGenerator());
+        try {
+            int version = in.readInt();
+            if (version != 1) {
+                throw new IOException("Unsupported world version: " + version);
+            }
+            creator.environment(Objects.requireNonNull(World.Environment.getEnvironment(in.readInt())));
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to read metadata for world: " + name, e);
+        }
+
+        long start = System.currentTimeMillis();
         World world;
         try {
             world = Bukkit.getScheduler().callSyncMethod(SharpPlugin.getInstance(), creator::createWorld).get();

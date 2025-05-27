@@ -23,6 +23,13 @@ public record WorldWriteTask(@NotNull World world,
         ThreadPoolExecutor executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(9, Thread.ofVirtual().factory());
         debug("Starting to write world: " + world.getName());
 
+        try {
+            out.writeInt(1); // Version
+            out.writeInt(world.getEnvironment().getId()); // Environment ID
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to write metadata for world: " + world.getName(), e);
+        }
+
         long start = System.currentTimeMillis();
         List<Chunk> chunks = new ArrayList<>();
         for (Vector2i coordinate : chunkCoordinates) {
