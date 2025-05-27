@@ -12,6 +12,8 @@ import org.bukkit.World;
 import org.jetbrains.annotations.NotNull;
 import org.joml.Vector2i;
 
+import static diruptio.sharp.SharpPlugin.debug;
+
 public record WorldWriteTask(@NotNull World world,
                              @NotNull List<Vector2i> chunkCoordinates,
                              @NotNull CompletableFuture<Void> future,
@@ -19,14 +21,25 @@ public record WorldWriteTask(@NotNull World world,
     @Override
     public void run() {
         ThreadPoolExecutor executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(9, Thread.ofVirtual().factory());
+        debug("Starting to write world: " + world.getName());
+
+        long start = System.currentTimeMillis();
         List<Chunk> chunks = new ArrayList<>();
         for (Vector2i coordinate : chunkCoordinates) {
             chunks.add(world.getChunkAt(coordinate.x, coordinate.y));
         }
+        debug("Loaded chunks for world: " + world.getName() + " in " + (System.currentTimeMillis() - start) + "ms");
 
         BlockPalette blockPalette = createBlockPalette(executor, chunks);
+        debug("Created block palette for world: " + world.getName() + " in " + (System.currentTimeMillis() - start) + "ms");
+
+        start = System.currentTimeMillis();
         writeBlockPalette(blockPalette);
+        debug("Wrote block palette for world: " + world.getName() + " in " + (System.currentTimeMillis() - start) + "ms");
+
+        start = System.currentTimeMillis();
         writeChunks(executor, chunks, blockPalette);
+        debug("Wrote chunks for world: " + world.getName() + " in " + (System.currentTimeMillis() - start) + "ms");
 
         try {
             executor.close();
@@ -39,11 +52,11 @@ public record WorldWriteTask(@NotNull World world,
     }
 
     private @NotNull BlockPalette createBlockPalette(@NotNull ExecutorService executor, @NotNull List<Chunk> chunks) {
+        long start = System.currentTimeMillis();
         List<Future<Map<BlockType, Integer>>> blockPaletteFutures = new ArrayList<>();
         for (Chunk chunk : chunks) {
             blockPaletteFutures.add(executor.submit(new ChunkCreateBlockPaletteTask(chunk)));
         }
-
         Map<BlockType, Integer> blockMap = new HashMap<>();
         for (Future<Map<BlockType, Integer>> future : blockPaletteFutures) {
             try {
@@ -55,6 +68,7 @@ public record WorldWriteTask(@NotNull World world,
                 throw new RuntimeException("Failed to create block palette for a chunk in world: " + world.getName(), e);
             }
         }
+        debug("Created block map for world: " + world.getName() + " in " + (System.currentTimeMillis() - start) + "ms");
 
         List<Map.Entry<BlockType, Integer>> blockList = new ArrayList<>(blockMap.entrySet());
         blockList.sort((v1, v2) -> Integer.compare(v2.getValue(), v1.getValue()));

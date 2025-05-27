@@ -53,7 +53,7 @@ tasks {
     runServer {
         minecraftVersion("1.21.5")
         workingDir = file("run")
-        jvmArgs = listOf("-javaagent:FUCIT.jar")
+        systemProperty("sharp.debug", "true")
     }
 }
 

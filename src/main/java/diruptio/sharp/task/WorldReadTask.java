@@ -19,11 +19,16 @@ import org.bukkit.World;
 import org.bukkit.WorldCreator;
 import org.jetbrains.annotations.NotNull;
 
+import static diruptio.sharp.SharpPlugin.debug;
+
 public record WorldReadTask(@NotNull String name,
                             @NotNull CompletableFuture<World> future,
                             @NotNull ObjectInputStream in) implements Runnable {
     @Override
     public void run() {
+        debug("Starting to read world: " + name);
+
+        long start = System.currentTimeMillis();
         WorldCreator creator = new WorldCreator(name).generator(new EmptyWorldGenerator());
         World world;
         try {
@@ -31,11 +36,17 @@ public record WorldReadTask(@NotNull String name,
         } catch (InterruptedException | ExecutionException e) {
             throw new RuntimeException("Failed to create world: " + name, e);
         }
+        debug("World " + name + " created in " + (System.currentTimeMillis() - start) + "ms");
 
+        start = System.currentTimeMillis();
         BlockPalette blockPalette = readBlockPalette();
-        readChunks(Objects.requireNonNull(world), blockPalette);
+        debug("Block palette for world " + name + " read in " + (System.currentTimeMillis() - start) + "ms");
 
-        future().complete(world);
+        start = System.currentTimeMillis();
+        readChunks(Objects.requireNonNull(world), blockPalette);
+        debug("Chunks for world " + name + " read in " + (System.currentTimeMillis() - start) + "ms");
+
+        future.complete(world);
     }
 
     private @NotNull BlockPalette readBlockPalette() {
@@ -53,6 +64,7 @@ public record WorldReadTask(@NotNull String name,
 
     private void readChunks(@NotNull World world, @NotNull BlockPalette blockPalette) {
         try {
+            long start = System.currentTimeMillis();
             List<Future<?>> chunkFutures = new ArrayList<>();
             int chunkCount = in.readInt();
             for (int i = 0; i < chunkCount; i++) {
@@ -71,6 +83,7 @@ public record WorldReadTask(@NotNull String name,
                 chunkFutures.add(future);
                 Thread.startVirtualThread(new ChunkBlocksReadTask(chunk, blockPalette, heaps, future));
             }
+            debug("Read chunk data for world " + name + " in " + (System.currentTimeMillis() - start) + "ms");
             for (Future<?> future : chunkFutures) {
                 future.get();
             }
