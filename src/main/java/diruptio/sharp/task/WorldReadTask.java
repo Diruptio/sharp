@@ -1,93 +1,58 @@
 package diruptio.sharp.task;
 
+import diruptio.sharp.task.blockpalette.BlockEntityPaletteReadTask;
+import diruptio.sharp.task.blockpalette.BlockPaletteReadTask;
+import diruptio.sharp.task.chunk.ChunksReadTask;
 import diruptio.sharp.util.BitBuffer;
 import diruptio.sharp.util.EmptyWorldGenerator;
 import diruptio.sharp.SharpPlugin;
-import diruptio.sharp.data.BlockPalette;
-import diruptio.sharp.data.BlockType;
+import diruptio.sharp.data.Palette;
 import java.io.IOException;
 import java.io.ObjectInputStream;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.*;
-import net.kyori.adventure.key.Key;
+import net.minecraft.nbt.CompoundTag;
 import org.bukkit.*;
+import org.bukkit.block.data.BlockData;
 import org.jetbrains.annotations.NotNull;
 
-import static diruptio.sharp.SharpPlugin.debug;
+import static diruptio.sharp.SharpPlugin.debugPerformance;
 
 public record WorldReadTask(@NotNull String name,
                             @NotNull CompletableFuture<World> future,
                             @NotNull ObjectInputStream in) implements Runnable {
     @Override
     public void run() {
-        debug("Starting to read world: " + name);
-
-        WorldCreator creator = new WorldCreator(name).generator(new EmptyWorldGenerator());
-        try {
-            int version = in.readInt();
-            if (version != 1) {
-                throw new IOException("Unsupported world version: " + version);
-            }
-            creator.environment(Objects.requireNonNull(World.Environment.getEnvironment(in.readInt())));
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to read metadata for world: " + name, e);
-        }
-
-        long start = System.currentTimeMillis();
-        World world;
-        try {
-            world = Bukkit.getScheduler().callSyncMethod(SharpPlugin.getInstance(), creator::createWorld).get();
-        } catch (InterruptedException | ExecutionException e) {
-            throw new RuntimeException("Failed to create world: " + name, e);
-        }
-        debug("World " + name + " created in " + (System.currentTimeMillis() - start) + "ms");
-
-        start = System.currentTimeMillis();
-        BlockPalette blockPalette = readBlockPalette();
-        debug("Block palette for world " + name + " read in " + (System.currentTimeMillis() - start) + "ms");
-
-        start = System.currentTimeMillis();
-        readChunks(Objects.requireNonNull(world), blockPalette);
-        debug("Chunks for world " + name + " read in " + (System.currentTimeMillis() - start) + "ms");
-
-        future.complete(world);
-    }
-
-    private @NotNull BlockPalette readBlockPalette() {
-        try {
-            int size = in.readInt();
-            BlockType[] blockTypes = new BlockType[size];
-            for (int i = 0; i < size; i++) {
-                blockTypes[i] = new BlockType(Key.key(in.readUTF()));
-            }
-            return new BlockPalette(blockTypes);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to read block palette for world: " + name, e);
-        }
-    }
-
-    private void readChunks(@NotNull World world, @NotNull BlockPalette blockPalette) {
         try {
             long start = System.currentTimeMillis();
-            List<Future<?>> chunkFutures = new ArrayList<>();
-            int chunkCount = in.readInt();
-            for (int i = 0; i < chunkCount; i++) {
-                BitBuffer buffer = new BitBuffer(in.readInt());
-                in.readFully(buffer.getBytes());
-                buffer.setSize(buffer.getCapacity());
+            ThreadPoolExecutor executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(16, Thread.ofVirtual().factory());
 
-                CompletableFuture<Void> future = new CompletableFuture<>();
-                chunkFutures.add(future);
-                Thread.startVirtualThread(new ChunkBlocksReadTask(world, blockPalette, buffer, future));
+            int version = in.readInt();
+            if (version != 1) {
+                throw new RuntimeException("Unsupported world version: " + version);
             }
-            debug("Read chunk data for world " + name + " in " + (System.currentTimeMillis() - start) + "ms");
-            for (Future<?> future : chunkFutures) {
-                future.get();
-            }
+
+            WorldCreator creator = new WorldCreator(name).generator(new EmptyWorldGenerator());
+            creator.environment(Objects.requireNonNull(World.Environment.getEnvironment(in.readInt())));
+            Future<World> worldFuture = Bukkit.getScheduler().callSyncMethod(SharpPlugin.getInstance(), creator::createWorld);
+
+            BitBuffer blockPaletteBuffer = BitBuffer.fromObjectInputStream(in, in.readInt());
+            Future<Palette<BlockData>> blockPaletteFuture = executor.submit(new BlockPaletteReadTask(blockPaletteBuffer));
+
+            BitBuffer blockEntityPaletteBuffer = BitBuffer.fromObjectInputStream(in, in.readInt());
+            Future<Palette<CompoundTag>> blockEntityPaletteFuture = executor.submit(new BlockEntityPaletteReadTask(blockEntityPaletteBuffer));
+
+            BitBuffer chunksBuffer = BitBuffer.fromObjectInputStream(in, in.readInt());
+            World world = worldFuture.get();
+            Palette<BlockData> blockPalette = blockPaletteFuture.get();
+            Palette<CompoundTag> blockEntityPalette = blockEntityPaletteFuture.get();
+            new ChunksReadTask(executor::submit, world, blockPalette, blockEntityPalette, chunksBuffer).run();
+
+            executor.close();
+            debugPerformance("World read", start);
+            future.complete(world);
         } catch (IOException | InterruptedException | ExecutionException e) {
-            throw new RuntimeException("Failed to read chunks for world: " + name, e);
+            throw new RuntimeException(e);
         }
     }
 }

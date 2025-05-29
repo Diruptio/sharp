@@ -29,7 +29,7 @@ public class SharpImpl extends Sharp {
                                                   @NotNull SharpStorage storage) {
         CompletableFuture<Void> future = new CompletableFuture<>();
         ObjectOutputStream out = storage.openOutputStream(name);
-        Thread.ofVirtual().name("SharpWriter-" + world.getName()).start(new WorldWriteTask(world, chunkCoordinates, future, out));
+        Thread.ofVirtual().name("SharpWriter-" + world.getName()).start(new WorldWriteTask(world, chunkCoordinates, out, future));
         return future;
     }
 }

@@ -1,118 +1,86 @@
 package diruptio.sharp.task;
 
-import diruptio.sharp.data.BlockPalette;
-import diruptio.sharp.data.BlockType;
+import diruptio.sharp.data.Palette;
+import diruptio.sharp.task.blockpalette.BlockEntityPaletteCreateTask;
+import diruptio.sharp.task.blockpalette.BlockEntityPaletteWriteTask;
+import diruptio.sharp.task.blockpalette.BlockPaletteCreateTask;
+import diruptio.sharp.task.blockpalette.BlockPaletteWriteTask;
+import diruptio.sharp.task.chunk.ChunksWriteTask;
 import diruptio.sharp.util.BitBuffer;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
 import java.util.*;
 import java.util.concurrent.*;
+import net.minecraft.nbt.CompoundTag;
 import org.bukkit.Chunk;
 import org.bukkit.World;
+import org.bukkit.block.data.BlockData;
 import org.jetbrains.annotations.NotNull;
 import org.joml.Vector2i;
 
-import static diruptio.sharp.SharpPlugin.debug;
+import static diruptio.sharp.SharpPlugin.debugPerformance;
 
 public record WorldWriteTask(@NotNull World world,
                              @NotNull List<Vector2i> chunkCoordinates,
-                             @NotNull CompletableFuture<Void> future,
-                             @NotNull ObjectOutputStream out) implements Runnable {
+                             @NotNull ObjectOutputStream out,
+                             @NotNull CompletableFuture<Void> future) implements Runnable {
     @Override
     public void run() {
-        ThreadPoolExecutor executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(9, Thread.ofVirtual().factory());
-        debug("Starting to write world: " + world.getName());
-
         try {
+            long start = System.currentTimeMillis();
+            ThreadPoolExecutor executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(16, Thread.ofVirtual().factory());
+
+            long chunkLoadStart = System.currentTimeMillis();
+            List<Chunk> chunks = new ArrayList<>();
+            for (Vector2i coordinate : chunkCoordinates) {
+                chunks.add(world.getChunkAt(coordinate.x, coordinate.y));
+            }
+            debugPerformance("Loaded chunks", chunkLoadStart);
+
+            Future<Palette<BlockData>> blockPaletteFuture = executor.submit(new BlockPaletteCreateTask(
+                    executor::submit,
+                    chunks));
+            Future<Palette<CompoundTag>> blockEntityPaletteFuture = executor.submit(new BlockEntityPaletteCreateTask(
+                    executor::submit,
+                    chunks));
+
+            Palette<BlockData> blockPalette = blockPaletteFuture.get();
+            Future<BitBuffer> writtenBlockPaletteFuture = executor.submit(new BlockPaletteWriteTask(
+                    blockPalette));
+            Palette<CompoundTag> blockEntityPalette = blockEntityPaletteFuture.get();
+            Future<BitBuffer> writtenBlockEntityPaletteFuture = executor.submit(new BlockEntityPaletteWriteTask(
+                    blockEntityPalette));
+            Future<BitBuffer> writtenChunksFuture = executor.submit(new ChunksWriteTask(
+                    executor::submit,
+                    chunks,
+                    blockPalette,
+                    blockEntityPalette));
+
             out.writeInt(1); // Version
             out.writeInt(world.getEnvironment().getId()); // Environment ID
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to write metadata for world: " + world.getName(), e);
-        }
 
-        long start = System.currentTimeMillis();
-        List<Chunk> chunks = new ArrayList<>();
-        for (Vector2i coordinate : chunkCoordinates) {
-            chunks.add(world.getChunkAt(coordinate.x, coordinate.y));
-        }
-        debug("Loaded chunks for world: " + world.getName() + " in " + (System.currentTimeMillis() - start) + "ms");
+            BitBuffer writtenBlockPalette = writtenBlockPaletteFuture.get();
+            writtenBlockPalette.flip();
+            out.writeInt(writtenBlockPalette.getSize());
+            out.write(writtenBlockPalette.getBytes(), 0, writtenBlockPalette.getBytes().length);
 
-        BlockPalette blockPalette = createBlockPalette(executor, chunks);
-        debug("Created block palette for world: " + world.getName() + " in " + (System.currentTimeMillis() - start) + "ms");
+            BitBuffer writtenBlockEntityPalette = writtenBlockEntityPaletteFuture.get();
+            writtenBlockEntityPalette.flip();
+            out.writeInt(writtenBlockEntityPalette.getSize());
+            out.write(writtenBlockEntityPalette.getBytes(), 0, writtenBlockEntityPalette.getBytes().length);
 
-        start = System.currentTimeMillis();
-        writeBlockPalette(blockPalette);
-        debug("Wrote block palette for world: " + world.getName() + " in " + (System.currentTimeMillis() - start) + "ms");
+            BitBuffer writtenChunks = writtenChunksFuture.get();
+            writtenChunks.flip();
+            out.writeInt(writtenChunks.getSize());
+            out.write(writtenChunks.getBytes(), 0, writtenChunks.getBytes().length);
 
-        start = System.currentTimeMillis();
-        writeChunks(executor, chunks, blockPalette);
-        debug("Wrote chunks for world: " + world.getName() + " in " + (System.currentTimeMillis() - start) + "ms");
-
-        try {
-            executor.close();
             out.flush();
             out.close();
+            executor.close();
+            debugPerformance("Wrote world", start);
             future.complete(null);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to close output stream of world: " + world.getName(), e);
-        }
-    }
-
-    private @NotNull BlockPalette createBlockPalette(@NotNull ExecutorService executor, @NotNull List<Chunk> chunks) {
-        long start = System.currentTimeMillis();
-        List<Future<Map<BlockType, Integer>>> blockPaletteFutures = new ArrayList<>();
-        for (Chunk chunk : chunks) {
-            blockPaletteFutures.add(executor.submit(new ChunkCreateBlockPaletteTask(chunk)));
-        }
-        Map<BlockType, Integer> blockMap = new HashMap<>();
-        for (Future<Map<BlockType, Integer>> future : blockPaletteFutures) {
-            try {
-                Map<BlockType, Integer> chunkBlockMap = future.get();
-                for (Map.Entry<BlockType, Integer> entry : chunkBlockMap.entrySet()) {
-                    blockMap.put(entry.getKey(), blockMap.getOrDefault(entry.getKey(), 0) + entry.getValue());
-                }
-            } catch (InterruptedException | ExecutionException e) {
-                throw new RuntimeException("Failed to create block palette for a chunk in world: " + world.getName(), e);
-            }
-        }
-        debug("Created block map for world: " + world.getName() + " in " + (System.currentTimeMillis() - start) + "ms");
-
-        List<Map.Entry<BlockType, Integer>> blockList = new ArrayList<>(blockMap.entrySet());
-        blockList.sort((v1, v2) -> Integer.compare(v2.getValue(), v1.getValue()));
-
-        BlockType[] palette = new BlockType[blockList.size()];
-        for (int i = 0; i < blockList.size(); i++) {
-            palette[i] = blockList.get(i).getKey();
-        }
-        return new BlockPalette(palette);
-    }
-
-    private void writeBlockPalette(@NotNull BlockPalette blockPalette) {
-        try {
-            out.writeInt(blockPalette.getSize());
-            for (int i = 0; i < blockPalette.getSize(); i++) {
-                out.writeUTF(blockPalette.getBlockType(i).key().asString());
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to write block palette for world: " + world.getName(), e);
-        }
-    }
-
-    private void writeChunks(@NotNull ExecutorService executor, @NotNull List<Chunk> chunks, @NotNull BlockPalette blockPalette) {
-        List<Future<BitBuffer>> chunkFutures = new ArrayList<>();
-        for (Chunk chunk : chunks) {
-            chunkFutures.add(executor.submit(new ChunkWriteTask(chunk, blockPalette)));
-        }
-
-        try {
-            out.writeInt(chunks.size());
-            for (Future<BitBuffer> future : chunkFutures) {
-                BitBuffer buffer = future.get();
-                out.writeInt(buffer.getSize());
-                out.write(buffer.getBytes());
-            }
         } catch (IOException | InterruptedException | ExecutionException e) {
-            throw new RuntimeException("Failed to write chunks of world: " + world.getName(), e);
+            throw new RuntimeException("Failed to write world", e);
         }
     }
 }

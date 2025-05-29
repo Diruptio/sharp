@@ -41,4 +41,9 @@ public class SharpPlugin extends JavaPlugin {
                     .append(Component.text(message).color(NamedTextColor.WHITE)));
         }
     }
+
+    public static void debugPerformance(@NotNull String message, long startTime) {
+        long duration = System.currentTimeMillis() - startTime;
+        debug(message + " in " + duration + "ms");
+    }
 }

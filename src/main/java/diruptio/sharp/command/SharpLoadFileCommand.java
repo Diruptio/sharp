@@ -28,7 +28,7 @@ public class SharpLoadFileCommand {
         String name = stack.getArgument("name", String.class);
         FileStorage storage = new FileStorage();
 
-        if (Bukkit.getWorld("name") != null) {
+        if (Bukkit.getWorld(name) != null) {
             sender.sendMessage(Sharp.getPrefix()
                     .append(Component.text("The world ").color(NamedTextColor.RED))
                     .append(Component.text(name).color(NamedTextColor.YELLOW))

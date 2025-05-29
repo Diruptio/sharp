@@ -120,7 +120,7 @@ public class BitBuffer {
     }
 
     public void writeBits(@NotNull BitBuffer buffer) {
-        expand(buffer.size - (capacity - size));
+        expand(Math.max(0, buffer.size - (capacity - size)));
         for (int i = 0; i < buffer.size; i++) {
             writeBit(buffer.readBit());
         }
@@ -168,6 +168,20 @@ public class BitBuffer {
 
     public byte readByte() {
         return readByte((byte) 8);
+    }
+
+    public void writeBytes(byte @NotNull [] value) {
+        for (byte b : value) {
+            writeByte(b);
+        }
+    }
+
+    public byte[] readBytes(int length) {
+        byte[] result = new byte[length];
+        for (int i = 0; i < length; i++) {
+            result[i] = readByte();
+        }
+        return result;
     }
 
     public void writeInt(int value) {
@@ -265,7 +279,7 @@ public class BitBuffer {
     public static @NotNull BitBuffer fromObjectInputStream(@NotNull ObjectInputStream inputStream, int length) {
         try {
             BitBuffer buffer = new BitBuffer(length);
-            inputStream.readFully(buffer.getBytes());
+            inputStream.readFully(buffer.getBytes(), 0, buffer.bytes.length);
             buffer.size = length;
             return buffer;
         } catch (IOException e) {
